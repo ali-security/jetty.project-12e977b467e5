@@ -25,6 +25,7 @@ import java.io.OutputStream;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.nio.file.InvalidPathException;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
@@ -407,6 +408,11 @@ public class DefaultServlet extends HttpServlet implements ResourceFactory
         catch (IOException e)
         {
             LOG.ignore(e);
+        }
+        catch (Throwable t)
+        {
+            // Any error has potential to reveal fully qualified path
+            throw (InvalidPathException) new InvalidPathException(pathInContext, "Invalid PathInContext").initCause(t);
         }
 
         if((r==null || !r.exists()) && pathInContext.endsWith("/jetty-dir.css"))

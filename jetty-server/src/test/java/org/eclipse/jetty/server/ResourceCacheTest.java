@@ -18,20 +18,27 @@
 
 package org.eclipse.jetty.server;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.file.InvalidPathException;
 
 import org.eclipse.jetty.http.HttpContent;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.resource.ResourceCollection;
+import org.eclipse.jetty.util.resource.ResourceFactory;
 import org.junit.Test;
 
 public class ResourceCacheTest
@@ -246,6 +253,51 @@ public class ResourceCacheTest
 
         assertEquals("4 - four", getContent(cache, "four.txt"));
         assertEquals("4 - four (no extension)", getContent(cache, "four"));
+    }
+
+    @Test
+    public void testInvalidPathInContext() throws Exception
+    {
+        ResourceCollection rc = new ResourceCollection(new String[]{
+                "../jetty-util/src/test/resources/org/eclipse/jetty/util/resource/four/"
+        });
+
+        final Resource directory = rc.getResources()[0];
+        String dirPath = directory.getFile().getAbsolutePath();
+
+        // A factory that lets resource errors escape (like DefaultServlet.getResource)
+        ResourceFactory factory = new ResourceFactory()
+        {
+            @Override
+            public Resource getResource(String path)
+            {
+                try
+                {
+                    return directory.addPath(path);
+                }
+                catch (IOException e)
+                {
+                    return null;
+                }
+            }
+        };
+
+        ResourceCache cache = new ResourceCache(null,factory,new MimeTypes(),false,false);
+
+        try
+        {
+            // '[' is not encoded by URIUtil.encodePath, so FileResource.addPath fails
+            // with a URISyntaxException message that includes the full resource base URI
+            cache.lookup("/[");
+            fail("Expected InvalidPathException");
+        }
+        catch (InvalidPathException e)
+        {
+            assertEquals("Invalid PathInContext", e.getReason());
+            assertEquals("/[", e.getInput());
+            assertThat(e.getMessage(), not(containsString(dirPath)));
+            assertThat(e.getMessage(), not(containsString("file:")));
+        }
     }
 
     

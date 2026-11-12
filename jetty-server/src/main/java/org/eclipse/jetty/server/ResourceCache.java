@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.ReadableByteChannel;
+import java.nio.file.InvalidPathException;
 import java.util.Comparator;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -177,9 +178,18 @@ public class ResourceCache
         if (content!=null && (content).isValid())
             return content;
        
-        // try loading the content from our factory.
-        Resource resource=_factory.getResource(pathInContext);
-        HttpContent loaded = load(pathInContext,resource);
+        HttpContent loaded;
+        try
+        {
+            // try loading the content from our factory.
+            Resource resource = _factory.getResource(pathInContext);
+            loaded = load(pathInContext, resource);
+        }
+        catch (Throwable t)
+        {
+            // Any error has potential to reveal fully qualified path
+            throw (InvalidPathException) new InvalidPathException(pathInContext, "Invalid PathInContext").initCause(t);
+        }
         if (loaded!=null)
             return loaded;
         

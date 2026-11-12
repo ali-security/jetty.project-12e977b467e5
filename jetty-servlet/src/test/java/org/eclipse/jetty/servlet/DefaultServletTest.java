@@ -18,7 +18,12 @@
 
 package org.eclipse.jetty.servlet;
 
+import static org.hamcrest.CoreMatchers.anyOf;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.not;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -39,8 +44,10 @@ import javax.servlet.FilterConfig;
 import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletResponse;
 
 import org.eclipse.jetty.http.DateGenerator;
+import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.LocalConnector;
 import org.eclipse.jetty.server.Server;
@@ -870,7 +877,64 @@ public class DefaultServletTest
         assertResponseContains("fake gzip",response);
         assertResponseContains("Vary: Accept-Encoding",response);
         assertResponseContains("Content-Encoding: gzip",response);
-        
+
+    }
+
+    @Test
+    public void testControlCharacter() throws Exception
+    {
+        testdir.ensureEmpty();
+        File docRoot = testdir.getFile("docroot");
+        FS.ensureDirExists(docRoot);
+        ServletHolder defholder = context.addServlet(DefaultServlet.class, "/");
+        defholder.setInitParameter("resourceBase", docRoot.getAbsolutePath());
+
+        String rawResponse = connector.getResponses("GET /context/%0a HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        System.out.println(response + "\n" + response.getContent());
+        assertThat("Response.status", response.getStatus(), anyOf(is(HttpServletResponse.SC_NOT_FOUND), is(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)));
+        assertThat("Response.content", response.getContent(), is(not(containsString(docRoot.toString()))));
+    }
+
+    @Test
+    public void testInvalidPathCharacter() throws Exception
+    {
+        testdir.ensureEmpty();
+        File docRoot = testdir.getFile("docroot");
+        FS.ensureDirExists(docRoot);
+        ServletHolder defholder = context.addServlet(DefaultServlet.class, "/");
+        defholder.setInitParameter("resourceBase", docRoot.getAbsolutePath());
+
+        assertInvalidPathNotRevealed(docRoot);
+    }
+
+    @Test
+    public void testInvalidPathCharacterCached() throws Exception
+    {
+        testdir.ensureEmpty();
+        File docRoot = testdir.getFile("docroot");
+        FS.ensureDirExists(docRoot);
+        ServletHolder defholder = context.addServlet(DefaultServlet.class, "/");
+        defholder.setInitParameter("resourceBase", docRoot.getAbsolutePath());
+        defholder.setInitParameter("maxCacheSize", "1024000");
+        defholder.setInitParameter("maxCachedFileSize", "512000");
+        defholder.setInitParameter("maxCachedFiles", "100");
+
+        assertInvalidPathNotRevealed(docRoot);
+    }
+
+    private void assertInvalidPathNotRevealed(File docRoot) throws Exception
+    {
+        // '[' is not encoded by URIUtil.encodePath, so resolving it against the resource base
+        // fails with an error message that includes the fully qualified resource base
+        String rawResponse = connector.getResponses("GET /context/%5B HTTP/1.1\r\nHost: local\r\nConnection: close\r\n\r\n");
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        System.out.println(response + "\n" + response.getContent());
+        assertThat("Response.status", response.getStatus(), anyOf(is(HttpServletResponse.SC_NOT_FOUND), is(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)));
+        assertThat("Response.content", response.getContent(), is(not(containsString(docRoot.getAbsolutePath()))));
+        assertThat("Response", rawResponse, is(not(containsString(docRoot.getAbsolutePath()))));
+        assertThat("Response", rawResponse, is(not(containsString(docRoot.getCanonicalPath()))));
+        assertThat("Response", rawResponse, is(not(containsString("file:"))));
     }
 
 
