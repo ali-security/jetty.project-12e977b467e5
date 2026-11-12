@@ -299,22 +299,27 @@ public abstract class AbstractSession implements AbstractSessionManager.SessionI
     protected void timeout() throws IllegalStateException
     {
         // remove session from context and invalidate other sessions with same ID.
-        _manager.removeSession(this,true);
-
-        // Notify listeners and unbind values
-        boolean do_invalidate=false;
-        synchronized (this)
+        try
         {
-            if (!_invalid)
-            {
-                if (_requests<=0)
-                    do_invalidate=true;
-                else
-                    _doInvalidate=true;
-            }
+            _manager.removeSession(this,true);
         }
-        if (do_invalidate)
-            doInvalidate();
+        finally
+        {
+            // Notify listeners and unbind values
+            boolean do_invalidate=false;
+            synchronized (this)
+            {
+                if (!_invalid)
+                {
+                    if (_requests<=0)
+                        do_invalidate=true;
+                    else
+                        _doInvalidate=true;
+                }
+            }
+            if (do_invalidate)
+                doInvalidate();
+        }
     }
 
     /* ------------------------------------------------------------- */
@@ -323,8 +328,14 @@ public abstract class AbstractSession implements AbstractSessionManager.SessionI
     {
         checkValid();
         // remove session from context and invalidate other sessions with same ID.
-        _manager.removeSession(this,true);
-        doInvalidate();
+        try
+        {
+            _manager.removeSession(this,true);
+        }
+        finally
+        {
+            doInvalidate();
+        }
     }
 
     /* ------------------------------------------------------------- */
