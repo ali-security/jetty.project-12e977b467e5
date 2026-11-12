@@ -1029,11 +1029,10 @@ public class RequestTest
                 "\n"
         );
         assertTrue(response.startsWith("HTTP/1.1 200 OK"));
-        assertEquals(2,cookies.size());
+        // CVE-2023-26049: the ';' inside the quoted value of "other" rejects that cookie
+        assertEquals(1,cookies.size());
         assertEquals("name", cookies.get(0).getName());
         assertEquals("value", cookies.get(0).getValue());
-        assertEquals("other", cookies.get(1).getName());
-        assertEquals("quoted=;value", cookies.get(1).getValue());
 
         cookies.clear();
         response=_connector.getResponses(
@@ -1051,14 +1050,12 @@ public class RequestTest
         );
         assertThat(response,startsWith("HTTP/1.1 200 OK"));
         assertThat(response.substring(15),containsString("HTTP/1.1 200 OK"));
-        assertEquals(4,cookies.size());
+        // "other" is rejected (CVE-2023-26049), but the parsed cookies are still shared between the identical requests
+        assertEquals(2,cookies.size());
         assertEquals("name", cookies.get(0).getName());
         assertEquals("value", cookies.get(0).getValue());
-        assertEquals("other", cookies.get(1).getName());
-        assertEquals("quoted=;value", cookies.get(1).getValue());
 
-        assertSame(cookies.get(0), cookies.get(2));
-        assertSame(cookies.get(1), cookies.get(3));
+        assertSame(cookies.get(0), cookies.get(1));
 
         cookies.clear();
         response=_connector.getResponses(
@@ -1076,14 +1073,17 @@ public class RequestTest
         );
         assertThat(response,startsWith("HTTP/1.1 200 OK"));
         assertThat(response.substring(15),containsString("HTTP/1.1 200 OK"));
-        assertEquals(4,cookies.size());
+        // The first request only yields "name" ("other" is rejected, CVE-2023-26049),
+        // the second yields "name" and "other", and the differing fields force a re-parse
+        assertEquals(3,cookies.size());
         assertEquals("name", cookies.get(0).getName());
         assertEquals("value", cookies.get(0).getValue());
-        assertEquals("other", cookies.get(1).getName());
-        assertEquals("quoted=;value", cookies.get(1).getValue());
+        assertEquals("name", cookies.get(1).getName());
+        assertEquals("value", cookies.get(1).getValue());
+        assertEquals("other", cookies.get(2).getName());
+        assertEquals("othervalue", cookies.get(2).getValue());
 
-        assertNotSame(cookies.get(0), cookies.get(2));
-        assertNotSame(cookies.get(1), cookies.get(3));
+        assertNotSame(cookies.get(0), cookies.get(1));
 
         cookies.clear();
 //NOTE: the javax.servlet.http.Cookie class sets the system property org.glassfish.web.rfc2109_cookie_names_enforced

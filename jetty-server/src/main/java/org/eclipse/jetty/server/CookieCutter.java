@@ -128,6 +128,7 @@ public class CookieCutter
             boolean invalue=false;
             boolean quoted=false;
             boolean escaped=false;
+            boolean reject=false;
             int tokenstart=-1;
             int tokenend=-1;
             for (int i = 0, length = hdr.length(), last=length-1; i < length; i++)
@@ -140,6 +141,9 @@ public class CookieCutter
                     if (escaped)
                     {
                         escaped=false;
+                        // CVE-2023-26049: an escaped ';' is still a ';' once the value is unquoted
+                        if (c==';')
+                            reject=true;
                         continue;
                     }
                     
@@ -165,6 +169,14 @@ public class CookieCutter
                         case '\\':
                             escaped=true;
                             continue;
+
+                        case ';':
+                            // CVE-2023-26049: a ';' is not a valid cookie-octet, even when quoted.
+                            // Allowing it would let this cookie absorb (and so expose the values of)
+                            // the cookies that follow it in the header, so the whole cookie is rejected.
+                            reject=true;
+                            continue;
+
                         default:
                             continue;
                     }
@@ -202,6 +214,10 @@ public class CookieCutter
                                     value="";
                                 tokenstart = -1;
                                 invalue=false;
+                                if (name==null)
+                                    // Nothing will be emitted for this value, so a rejection
+                                    // must not be carried over to the next cookie.
+                                    reject=false;
                                 break;
                                 
                             default:
@@ -279,7 +295,15 @@ public class CookieCutter
                     
                     try
                     {
-                        if (name.startsWith("$"))
+                        if (reject)
+                        {
+                            // CVE-2023-26049: drop the rejected cookie (or attribute). The attributes
+                            // following a rejected cookie belong to it, so they must not be applied
+                            // to the previous cookie either.
+                            if (!name.startsWith("$"))
+                                cookie = null;
+                        }
+                        else if (name.startsWith("$"))
                         {
                             String lowercaseName = name.toLowerCase(Locale.ENGLISH);
                             if ("$path".equals(lowercaseName))
@@ -317,6 +341,7 @@ public class CookieCutter
 
                     name = null;
                     value = null;
+                    reject = false;
                 }
             }
         }
