@@ -43,6 +43,7 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import javax.servlet.MultipartConfigElement;
 import javax.servlet.ServletException;
@@ -1321,6 +1322,244 @@ public class RequestTest
     {
         Request request = new Request(null, null);
         request.setCharacterEncoding("doesNotExist");
+    }
+
+    @Test
+    public void testMultiPartFormTooManyParts() throws Exception
+    {
+        // No context and no Server attribute: the default maxFormKeys of 1000 limits the number of parts.
+        final File testTmpDir = createMultiPartTmpDir("mptoomanyparts");
+        final AtomicReference<String> result = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request,HttpServletResponse response)
+            {
+                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(testTmpDir.getAbsolutePath(),-1,-1,0));
+                try
+                {
+                    result.set("parsed " + request.getParameterMap().size());
+                }
+                catch (IllegalStateException e)
+                {
+                    result.set(e.getMessage());
+                }
+                return true;
+            }
+        };
+
+        StringBuilder multipart = new StringBuilder();
+        for (int i=0;i<1001;i++)
+            multipart.append(createMultiPartField("field"+i,"x"));
+        multipart.append("--AaB03x--\r\n");
+
+        String responses=_connector.getResponses(createMultiPartRequest("/",multipart.toString()));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form with too many parts [1001 > 1000]",result.get());
+    }
+
+    @Test
+    public void testMultiPartFormTooLarge() throws Exception
+    {
+        // No context and no Server attribute: the default maxFormContentSize of 200000 limits the
+        // parts without a filename before they are read into memory as parameters.
+        final File testTmpDir = createMultiPartTmpDir("mptoolarge");
+        final AtomicReference<String> result = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request,HttpServletResponse response)
+            {
+                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(testTmpDir.getAbsolutePath(),-1,-1,0));
+                try
+                {
+                    String value = request.getParameter("field1");
+                    result.set("parsed " + (value == null ? -1 : value.length()));
+                }
+                catch (IllegalStateException e)
+                {
+                    result.set(e.getMessage());
+                }
+                return true;
+            }
+        };
+
+        char[] content = new char[200001];
+        Arrays.fill(content,'0');
+        String multipart = createMultiPartField("field1",new String(content)) + "--AaB03x--\r\n";
+
+        String responses=_connector.getResponses(createMultiPartRequest("/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form is larger than max length 200000",result.get());
+    }
+
+    @Test
+    public void testMultiPartLargeFileNotFormContent() throws Exception
+    {
+        // A part with a filename is not form content, so it is not limited by maxFormContentSize.
+        final File testTmpDir = createMultiPartTmpDir("mplargefile");
+        final AtomicReference<String> result = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request,HttpServletResponse response) throws IOException
+            {
+                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(testTmpDir.getAbsolutePath(),-1,-1,0));
+                try
+                {
+                    String field1 = request.getParameter("field1");
+                    Part stuff = request.getPart("stuff");
+                    result.set(field1 + " " + (stuff == null ? -1 : stuff.getSize()));
+                }
+                catch (IllegalStateException | ServletException e)
+                {
+                    result.set(e.getMessage());
+                }
+                return true;
+            }
+        };
+
+        char[] content = new char[250000];
+        Arrays.fill(content,'0');
+        String multipart = createMultiPartField("field1","Joe Blow") +
+        "--AaB03x\r\n"+
+        "content-disposition: form-data; name=\"stuff\"; filename=\"foo.upload\"\r\n"+
+        "Content-Type: text/plain;charset=ISO-8859-1\r\n"+
+        "\r\n"+
+        new String(content)+"\r\n"+
+        "--AaB03x--\r\n";
+
+        String responses=_connector.getResponses(createMultiPartRequest("/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Joe Blow 250000",result.get());
+    }
+
+    @Test
+    public void testMultiPartFormContextLimits() throws Exception
+    {
+        // The ContextHandler maxFormKeys and maxFormContentSize limit the multipart form content.
+        final File testTmpDir = createMultiPartTmpDir("mpcontextlimits");
+        final AtomicReference<String> result = new AtomicReference<>();
+        RequestHandler handler = new RequestHandler();
+        handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request,HttpServletResponse response)
+            {
+                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(testTmpDir.getAbsolutePath(),-1,-1,0));
+                try
+                {
+                    result.set("parsed " + request.getParameterMap().size());
+                }
+                catch (IllegalStateException e)
+                {
+                    result.set(e.getMessage());
+                }
+                return true;
+            }
+        };
+
+        ContextHandler contextHandler = new ContextHandler();
+        contextHandler.setContextPath("/foo");
+        contextHandler.setResourceBase(".");
+        contextHandler.setMaxFormKeys(3);
+        contextHandler.setMaxFormContentSize(10);
+        contextHandler.setHandler(handler);
+        _server.stop();
+        _server.setHandler(contextHandler);
+        _server.start();
+
+        // As many parts as allowed
+        String multipart = createMultiPartField("a","1") + createMultiPartField("b","2") + createMultiPartField("c","3") + "--AaB03x--\r\n";
+        String responses=_connector.getResponses(createMultiPartRequest("/foo/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("parsed 3",result.get());
+
+        // One part too many
+        multipart = createMultiPartField("a","1") + createMultiPartField("b","2") + createMultiPartField("c","3") + createMultiPartField("d","4") + "--AaB03x--\r\n";
+        responses=_connector.getResponses(createMultiPartRequest("/foo/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form with too many parts [4 > 3]",result.get());
+
+        // Form content one byte too large
+        multipart = createMultiPartField("a","0123456789X") + "--AaB03x--\r\n";
+        responses=_connector.getResponses(createMultiPartRequest("/foo/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form is larger than max length 10",result.get());
+    }
+
+    @Test
+    public void testMultiPartFormServerLimits() throws Exception
+    {
+        // Without a context, the Server maxFormKeys and maxFormContentSize attributes limit the multipart form content.
+        final File testTmpDir = createMultiPartTmpDir("mpserverlimits");
+        final AtomicReference<String> result = new AtomicReference<>();
+        _handler._checker = new RequestTester()
+        {
+            @Override
+            public boolean check(HttpServletRequest request,HttpServletResponse response)
+            {
+                request.setAttribute(Request.__MULTIPART_CONFIG_ELEMENT, new MultipartConfigElement(testTmpDir.getAbsolutePath(),-1,-1,0));
+                try
+                {
+                    result.set("parsed " + request.getParameterMap().size());
+                }
+                catch (IllegalStateException e)
+                {
+                    result.set(e.getMessage());
+                }
+                return true;
+            }
+        };
+        _server.setAttribute("org.eclipse.jetty.server.Request.maxFormKeys",2);
+        _server.setAttribute("org.eclipse.jetty.server.Request.maxFormContentSize","5");
+
+        // As many parts as allowed
+        String multipart = createMultiPartField("a","1") + createMultiPartField("b","2") + "--AaB03x--\r\n";
+        String responses=_connector.getResponses(createMultiPartRequest("/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("parsed 2",result.get());
+
+        // One part too many
+        multipart = createMultiPartField("a","1") + createMultiPartField("b","2") + createMultiPartField("c","3") + "--AaB03x--\r\n";
+        responses=_connector.getResponses(createMultiPartRequest("/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form with too many parts [3 > 2]",result.get());
+
+        // Form content one byte too large
+        multipart = createMultiPartField("a","012") + createMultiPartField("b","345") + "--AaB03x--\r\n";
+        responses=_connector.getResponses(createMultiPartRequest("/",multipart));
+        assertThat(responses,startsWith("HTTP/1.1 200"));
+        assertEquals("Form is larger than max length 5",result.get());
+    }
+
+    private File createMultiPartTmpDir(String prefix) throws IOException
+    {
+        File testTmpDir = File.createTempFile(prefix, null);
+        if (testTmpDir.exists())
+            testTmpDir.delete();
+        testTmpDir.mkdir();
+        testTmpDir.deleteOnExit();
+        return testTmpDir;
+    }
+
+    private String createMultiPartField(String name, String value)
+    {
+        return "--AaB03x\r\n"+
+        "content-disposition: form-data; name=\""+name+"\"\r\n"+
+        "\r\n"+
+        value+"\r\n";
+    }
+
+    private String createMultiPartRequest(String uri, String multipart)
+    {
+        return "POST "+uri+" HTTP/1.1\r\n"+
+        "Host: whatever\r\n"+
+        "Content-Type: multipart/form-data; boundary=\"AaB03x\"\r\n"+
+        "Content-Length: "+multipart.getBytes(StandardCharsets.ISO_8859_1).length+"\r\n"+
+        "Connection: close\r\n"+
+        "\r\n"+
+        multipart;
     }
 
     interface RequestTester

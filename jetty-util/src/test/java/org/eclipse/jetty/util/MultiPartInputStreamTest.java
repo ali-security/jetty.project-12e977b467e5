@@ -378,6 +378,92 @@ public class MultiPartInputStreamTest
     }
 
     @Test
+    public void testTooManyParts()
+    throws Exception
+    {
+        MultipartConfigElement config = new MultipartConfigElement(_dirname);
+        MultiPartInputStreamParser mpis = new MultiPartInputStreamParser(new ByteArrayInputStream(createMultipartFieldsString(3).getBytes()),
+                                                            _contentType,
+                                                             config,
+                                                             _tmpDir,
+                                                             2);
+        mpis.setDeleteOnExit(true);
+        try
+        {
+            mpis.getParts();
+            fail("Request should have exceeded maxParts");
+        }
+        catch (IllegalStateException e)
+        {
+            assertEquals("Form with too many parts [3 > 2]", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testMaxParts()
+    throws Exception
+    {
+        MultipartConfigElement config = new MultipartConfigElement(_dirname);
+        MultiPartInputStreamParser mpis = new MultiPartInputStreamParser(new ByteArrayInputStream(createMultipartFieldsString(3).getBytes()),
+                                                            _contentType,
+                                                             config,
+                                                             _tmpDir,
+                                                             3);
+        mpis.setDeleteOnExit(true);
+        assertEquals(3, mpis.getParts().size());
+
+        mpis = new MultiPartInputStreamParser(new ByteArrayInputStream(createMultipartFieldsString(3).getBytes()),
+                                              _contentType,
+                                              config,
+                                              _tmpDir,
+                                              -1);
+        mpis.setDeleteOnExit(true);
+        assertEquals(3, mpis.getParts().size());
+    }
+
+    @Test
+    public void testDefaultMaxParts()
+    throws Exception
+    {
+        MultipartConfigElement config = new MultipartConfigElement(_dirname);
+        MultiPartInputStreamParser mpis = new MultiPartInputStreamParser(new ByteArrayInputStream(createMultipartFieldsString(1000).getBytes()),
+                                                            _contentType,
+                                                             config,
+                                                             _tmpDir);
+        mpis.setDeleteOnExit(true);
+        assertEquals(1000, mpis.getParts().size());
+
+        mpis = new MultiPartInputStreamParser(new ByteArrayInputStream(createMultipartFieldsString(1001).getBytes()),
+                                              _contentType,
+                                              config,
+                                              _tmpDir);
+        mpis.setDeleteOnExit(true);
+        try
+        {
+            mpis.getParts();
+            fail("Request should have exceeded the default maxParts");
+        }
+        catch (IllegalStateException e)
+        {
+            assertEquals("Form with too many parts [1001 > 1000]", e.getMessage());
+        }
+    }
+
+    private String createMultipartFieldsString(int fields)
+    {
+        StringBuilder multipart = new StringBuilder();
+        for (int i=0; i<fields; i++)
+        {
+            multipart.append("--AaB03x\r\n");
+            multipart.append("content-disposition: form-data; name=\"field").append(i).append("\"\r\n");
+            multipart.append("\r\n");
+            multipart.append("value").append(i).append("\r\n");
+        }
+        multipart.append("--AaB03x--\r\n");
+        return multipart.toString();
+    }
+
+    @Test
     public void testPartFileNotDeleted () throws Exception
     {
         MultipartConfigElement config = new MultipartConfigElement(_dirname, 1024, 3072, 50);  

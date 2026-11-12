@@ -53,7 +53,10 @@ import org.eclipse.jetty.util.log.Logger;
 public class MultiPartInputStreamParser
 {
     private static final Logger LOG = Log.getLogger(MultiPartInputStreamParser.class);
+    private static final int DEFAULT_MAX_FORM_KEYS = 1000;
     public static final MultipartConfigElement  __DEFAULT_MULTIPART_CONFIG = new MultipartConfigElement(System.getProperty("java.io.tmpdir"));
+    private final int _maxParts;
+    private int _numParts;
     protected InputStream _in;
     protected MultipartConfigElement _config;
     protected String _contentType;
@@ -332,10 +335,23 @@ public class MultiPartInputStreamParser
      */
     public MultiPartInputStreamParser (InputStream in, String contentType, MultipartConfigElement config, File contextTmpDir)
     {
+        this(in, contentType, config, contextTmpDir, DEFAULT_MAX_FORM_KEYS);
+    }
+
+    /**
+     * @param in Request input stream
+     * @param contentType Content-Type header
+     * @param config MultipartConfigElement
+     * @param contextTmpDir javax.servlet.context.tempdir
+     * @param maxParts the maximum number of parts that can be parsed from the multipart content (0 for no parts allowed, -1 for unlimited parts).
+     */
+    public MultiPartInputStreamParser (InputStream in, String contentType, MultipartConfigElement config, File contextTmpDir, int maxParts)
+    {
         _in = new ReadLineInputStream(in);
        _contentType = contentType;
        _config = config;
        _contextTmpDir = contextTmpDir;
+       _maxParts = maxParts;
        if (_contextTmpDir == null)
            _contextTmpDir = new File (System.getProperty("java.io.tmpdir"));
        
@@ -584,6 +600,11 @@ public class MultiPartInputStreamParser
             {
                 continue;
             }
+
+            // Check if we can create a new part.
+            _numParts++;
+            if (_maxParts >= 0 && _numParts > _maxParts)
+                throw new IllegalStateException(String.format("Form with too many parts [%d > %d]", _numParts, _maxParts));
 
             //Have a new Part
             MultiPart part = new MultiPart(name, filename);
